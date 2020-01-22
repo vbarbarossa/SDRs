@@ -64,10 +64,14 @@ plot(st_geometry(st_as_sf(stations_attributes,coords = c('LON','LAT'),crs=4326))
 #' exclude stations with an upstream catchment area < `r MIN_UP_AREA` km2,
 #' and check the plot again
 
-plot(st_geometry(st_as_sf(stations_attributes %>% filter(area.est > MIN_UP_AREA),coords = c('LON','LAT'),crs=4326)),
+stations_attributes <- stations_attributes %>% filter(area.est > MIN_UP_AREA)
+
+plot(st_geometry(st_as_sf(stations_attributes,coords = c('LON','LAT'),crs=4326)),
      pch = 21, cex = 0.5, main = paste0('n = ',nrow(stations_attributes %>% filter(area.est > MIN_UP_AREA))))
 
 #' exclude stations whose catchment boundary overlaps for more than `r MAX_OVERLAP_PERC`%
+
+bb <- rnaturalearth::ne_download(type = "wgs84_bounding_box", category = "physical",returnclass = "sf") #%>% st_transform(54009)
 
 # assign a main basin value to each station
 start_time <- Sys.time() #monitor time elapsed
@@ -75,42 +79,96 @@ basins <- lapply(
   c('af','ar','as','au','eu','gr','na','sa','si'), 
   function(x){
     readRDS(paste0(BAS_dir,x,'.rds')) %>%
+      st_buffer(0) %>%
+      st_crop(bb) %>%
       st_transform(54009) %>%
       mutate(MAIN_BAS_AREA = as.numeric(st_area(.)/10**6)) %>% #include area in km2
       # make the shapefile lighter, anyway there are no stations catchments < than the threshold
       # do minus 100 km2 since there might be differences in the area calculation depending on the projection used
       filter(MAIN_BAS_AREA >= (MIN_UP_AREA-100)) 
   }
-) %>%
-  do.call('rbind',.)
+) %>%  do.call('rbind',.)
 Sys.time() - start_time #~1.5 min
 
-plot(st_geometry(basins)) # need to crop based on bounding box
-
-st_intersects()
-
-# for each main basin
-
-# order from most to least downstream (using catchment area)
-
-#identify the most downstream point
-
-# intersect with upstream points
-
-# calculate perc_overlap with intersecting points
-
-# remove points that have perc_overlap > MAX_OVERLAP_PERC
-
-# go to the next most downstream point and repeat until last row
+# get the MAIN_BAS id for each station by intersecting the polygons with the points
+start_time <- Sys.time()
+stations_filter1 <- st_intersection(
+  st_as_sf(stations_attributes,coords = c('LON','LAT'),crs=4326) %>% st_transform(54009),
+  basins %>% st_buffer(0) # buffer to avoid TopologyException error
+) %>% as_tibble() %>% select(-geometry)
+Sys.time() - start_time # ~6 min
 
 
+# core function that compile the catchments for the stations based on the maximum area overlap criteria
+start_time <- Sys.time()
+stations_catchments <- lapply(
+  # from the main basin with more stations
+  table(stations_filter1$MAIN_BAS %>% as.character) %>% sort(.,decreasing = T) %>% names,
+  function(ws){
+    
+    # sub-table with only the needed stations belonging to the main basin
+    t <- stations_filter1 %>% filter(MAIN_BAS == ws) %>% select(gsim.no,area.est,MAIN_BAS)
+    
+    if(nrow(t) == 1){
+      # simply return the catchment shpefile
+      catch <- read_sf(paste0(GSIM_dir,'GSIM_catchments/',tolower(as.character(t$gsim.no)),'.shp'))%>% 
+        mutate(gsim.no = t$gsim.no) %>% select(gsim.no) %>%
+        full_join(.,t) %>%
+        st_buffer(0) %>% # buffer for any further geometry operation needed
+        select(gsim.no,area.est,MAIN_BAS)
+      
+      return(catch)
+      
+    }else{
+      
+      # compile a shapefile with all the catchments
+      catch <- lapply(
+        as.character(t$gsim.no), function(x) read_sf(paste0(GSIM_dir,'GSIM_catchments/',tolower(x),'.shp'))
+      ) %>% do.call('rbind',.) %>% mutate(gsim.no = t$gsim.no) %>% select(gsim.no) %>%
+        full_join(.,t) %>%
+        # order from most to least downstream (using catchment area)
+        arrange(desc(area.est)) %>%
+        st_buffer(0) %>% 
+        select(gsim.no,area.est,MAIN_BAS)
+      
+      # set index for iterative routine
+      i = 1
+      
+      # iterate from most downstream to most upstream station
+      # and exclude stations based on catchment overlap criteria
+      while(!is.na(catch$gsim.no[i])){ # this stops at the end of the rows of the catch shapefile 
+        
+        # calculate difference polygon of most downstream catchment with upstream catchments
+        d <- st_difference(catch[i,],catch[i+1:nrow(catch),]) %>% 
+          # transform to projected coordinates to calculate area
+          st_transform(54009) %>% 
+          # calculate perc_overlap with intersecting points as (1 - area_diff/area)*100 = (area_up/area)*100
+          mutate(perc_overlap = (1 - as.numeric(st_area(.)/10**6)/area.est)*100) %>% 
+          # filter out stations with overlap > MAX_OVERLAP_PERC
+          filter(perc_overlap <= MAX_OVERLAP_PERC)
+        
+        # update the catchment shapefile accordingly
+        catch <- catch %>%
+          filter(gsim.no %in% c(as.character(gsim.no[1:i]),as.character(d$gsim.no.1))) %>%
+          arrange(desc(area.est))
+        
+        # update index
+        i = i + 1
+      }
+      
+      return(catch)
+    }
+    
+  }
+) %>% do.call('rbind',.)
+Sys.time() - start_time #
 
 #' exclude stations falling within areas with less than X% species coverage
+#' <span style="color:red"> **TBD** </span>
+
+
+
+#' Sample 
 #' 
 
 stations_tab <- right_join(.,stations_indices)
-
-#' exclude stations that within the same main basin (with an outlet to the sea) 
-#' have the same stream order and overlapping upstream catchment
-#' 
-
