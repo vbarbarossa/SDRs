@@ -254,10 +254,8 @@ fish_end <- fish %>%
   summarize(endemism = as.integer(length(unique(MAIN_BAS)) == 1))
 
 #' join table with the fish data
-fish <- bind_rows(
-  vroom::vroom('data/hybas12_fish.csv',delim=','),
-  vroom::vroom('data/hybas12_fish_custom_ranges_occth10.csv',delim=',')
-) %>% 
+fish <- fish %>% 
+  full_join(.,fish_end) %>%
   filter(HYBAS_ID %in% catch_hb$HYBAS_ID) %>%
   full_join(.,catch_hb)
 
@@ -271,7 +269,8 @@ fish <- bind_rows(
 fish_sr <- fish %>%
   group_by(gsim.no) %>%
   summarize(
-    SR = length(unique(binomial))
+    SR_tot = length(unique(binomial)),
+    SR_end = length(unique(binomial[endemism == 1]))
   )
 
 # range of SR values
