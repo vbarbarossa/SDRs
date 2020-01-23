@@ -1,11 +1,24 @@
+# set wd
+knitr::opts_knit$set(root.dir = 'D:/projects/SDRs')
+
 #' load assigned variables from MASTER.R
 source('R/MASTER.R')
 
+# what has been loaded
+as.list(.GlobalEnv)
+
 #' load packages needed
-valerioUtils::libinv('dplyr'); valerioUtils::libinv('sf')
+valerioUtils::libinv(c('dplyr','sf'))
 
 
-#' exclude stations with less than `r MIN_MONITORING_YEARS` years of monitoring.
+#' *****************************************************************************************************************************
+#' # Compile monitoring stations data
+#' 
+#' 
+#' ## Flow data
+#' 
+#' 
+#' Exclude stations with less than `r MIN_MONITORING_YEARS` years of monitoring.
 #' 
 #' Reliable yearly values are selected following Gudmundsson et al., 2018:
 #' *Index values at a yearly time step are reliable if at least 350 daily observations are declared reliable.*
@@ -41,7 +54,7 @@ stations_indices <- lapply( # use lapply function that can be easily parallelize
   full_join(stations_selection,., by = c('gsim.no' = 'gsim.id'))
 Sys.time() - start_time #~6 min
 
-#' merge indices with attribute table
+#' ## Physical attributes
 #' 
 
 stations_attributes <- read.csv(paste0(GSIM_dir,'GSIM_catalog/GSIM_catchment_characteristics.csv')) %>%
@@ -161,14 +174,124 @@ stations_catchments <- lapply(
     
   }
 ) %>% do.call('rbind',.)
-Sys.time() - start_time #
+Sys.time() - start_time #~ 26 min
 
 #' exclude stations falling within areas with less than X% species coverage
 #' <span style="color:red"> **TBD** </span>
 
+#' save important layers
+
+# tables
+write.csv(stations_indices %>% filter(gsim.no %in% stations_catchments$gsim.no),'tabs/stations_indices.csv',row.names = F)
+write.csv(stations_attributes %>% filter(gsim.no %in% stations_catchments$gsim.no),'tabs/stations_attributes.csv',row.names = F)
+
+# shapefiles
+st_write(stations_attributes %>% filter(gsim.no %in% stations_catchments$gsim.no) %>% 
+           st_as_sf(.,coords = c('LON','LAT'),crs=4326) %>% select(gsim.no,area.est,quality),
+         'spatial/stations_points.gpkg'
+)
+st_write(stations_catchments,
+         'spatial/stations_catchments.gpkg'
+)
+st_write(basins %>% filter(MAIN_BAS %in% stations_catchments$MAIN_BAS) %>% st_transform(4326),
+         'spatial/main_basins.gpkg'
+)
+
+# clear the console
+rm(list = ls())
 
 
-#' Sample 
+#' *****************************************************************************************************************************
+#' # Species richness data sampling
 #' 
+#' 
+#' **Q: should we exclude species occurring in endoreic basins?**
 
-stations_tab <- right_join(.,stations_indices)
+source('R/MASTER.R')
+
+
+#' intersect the catchments with the HB12 points to assign the gsim id to each catchment
+
+# load hydrobasins 12 shpefile points layer
+hb12_p <- read_sf('data/hybas12_points_nolakes.gpkg') %>%
+  select(HYBAS_ID,MAIN_BAS)
+
+# load the previously produced catchments layer
+catch <- read_sf('spatial/stations_catchments.gpkg')
+
+# check crs
+st_crs(hb12_p) == st_crs(catch)
+
+# get the sparse list of intersections
+lst <- st_intersects(catch,hb12_p)
+
+# number of catchments without hydrobasins:
+length(lst) - lst %>% sapply(.,function(x) length(x) != 0) %>% sum
+
+# ids of hydrobasins
+hybas_id <- hb12_p$HYBAS_ID
+
+# compile table with HYBAS_ID and corresponding gsim.no
+names(lst) <- catch$gsim.no
+catch_hb <- lst[which(unname(lst %>% sapply(.,function(x) length(x) != 0)))] %>% 
+  lapply(seq_along(.), function(n,v,i){data.frame(HYBAS_ID = hybas_id[v[[i]]],gsim.no = n[i])},n=names(.),v = .) %>%
+  do.call('rbind',.) %>%
+  as_tibble()
+
+#' check fish endemism at the basin scale: if a fish species occurs in only one main basin then it is considered endemic
+
+# get the fish data
+fish <- bind_rows(
+  vroom::vroom('data/hybas12_fish.csv',delim=','),
+  vroom::vroom('data/hybas12_fish_custom_ranges_occth10.csv',delim=',')
+)
+
+# merge with hb12_p data to have info on MAIN_BAS
+
+fish_end <- fish %>%
+  full_join(.,hb12_p %>% as_tibble() %>% select(-geom)) %>%
+  group_by(binomial) %>%
+  summarize(endemism = as.integer(length(unique(MAIN_BAS)) == 1))
+
+#' join table with the fish data
+fish <- bind_rows(
+  vroom::vroom('data/hybas12_fish.csv',delim=','),
+  vroom::vroom('data/hybas12_fish_custom_ranges_occth10.csv',delim=',')
+) %>% 
+  filter(HYBAS_ID %in% catch_hb$HYBAS_ID) %>%
+  full_join(.,catch_hb)
+
+#' include species traits and functional groups
+#' <span style="color:red"> **TBD** </span>
+
+# TBD
+
+#' calculate species richness per catchment
+
+fish_sr <- fish %>%
+  group_by(gsim.no) %>%
+  summarize(
+    SR = length(unique(binomial))
+  )
+
+# range of SR values
+summary(fish_sr)
+
+# save table
+write.csv(fish_sr,'tabs/stations_SR.csv',row.names = F)
+
+#' put together and overall table with attributes, flow metrics and SR
+
+write.csv(
+  full_join(
+    read.csv('tabs/stations_attributes.csv') %>% as_tibble(),
+    read.csv('tabs/stations_indices.csv') %>% as_tibble()
+  ) %>%
+    full_join(.,catch %>% as_tibble() %>% select(gsim.no,MAIN_BAS)) %>%
+    full_join(.,fish_sr)
+  ,'tabs/stations_all_attributes.csv',row.names = F
+)
+
+
+
+
