@@ -200,6 +200,47 @@ st_write(basins %>% filter(MAIN_BAS %in% stations_catchments$MAIN_BAS) %>% st_tr
 # clear the console
 rm(list = ls())
 
+#' *****************************************************************************************************************************
+#' # Number of dams from GOOD2 dataset
+#' 
+
+# read dams data
+dams <- read_sf('data/GOOD2/GOOD2_dams.shp')
+
+# read GSIM catchments
+catch <- read_sf('spatial/stations_catchments.gpkg')
+
+# check crs
+st_crs(dams) == st_crs(catch)
+
+# get the sparse list of intersections
+lst <- st_intersects(catch,dams)
+
+# number of catchments without dams:
+length(lst) - lst %>% sapply(.,function(x) length(x) != 0) %>% sum
+
+# ids of dams
+dams_id <- dams$DAM_ID
+
+# compile table with HYBAS_ID and corresponding gsim.no
+names(lst) <- catch$gsim.no
+catch_dams <- lst[which(unname(lst %>% sapply(.,function(x) length(x) != 0)))] %>% 
+  lapply(seq_along(.), function(n,v,i){data.frame(DAMS_ID = dams_id[v[[i]]],gsim.no = n[i])},n=names(.),v = .) %>%
+  do.call('rbind',.) %>%
+  as_tibble()
+
+# count number of dams in each catchment
+dams_no <- catch_dams %>%
+  group_by(gsim.no) %>%
+  summarise(dams_good2_no = n())
+
+# join to the catchments table
+catch_new <- left_join(catch,dams_no)
+# set to 0 the NAs
+catch_new$dams_good2_no[is.na(catch_new$dams_good2_no)] <- 0
+
+# and update the previous catchment gpkg file
+st_write(catch_new,'spatial/stations_catchments.gpkg',delete_dsn = TRUE)
 
 #' *****************************************************************************************************************************
 #' # Species richness data sampling
@@ -240,14 +281,24 @@ catch_hb <- lst[which(unname(lst %>% sapply(.,function(x) length(x) != 0)))] %>%
 
 #' check fish endemism at the basin scale: if a fish species occurs in only one main basin then it is considered endemic
 
-# get the fish data
+# load habitat type to exclude exclusively lentic species
+habitat_iucn <- read.csv('data/iucn_habitat_type.csv') %>%
+  as_tibble() %>%
+  select(binomial,lotic,lentic) %>%
+  mutate(OnlyLake = as.numeric(lotic == 0 & lentic == 1))
+habitat_custom <- read.csv('data/custom_ranges_habitatFishbase.csv') %>%
+  as_tibble()
+
+# get the fish data and filter out exclusively lentic
 fish <- bind_rows(
-  vroom::vroom('data/hybas12_fish.csv',delim=','),
-  vroom::vroom('data/hybas12_fish_custom_ranges_occth10.csv',delim=',')
+  vroom::vroom('data/hybas12_fish.csv',delim=',') %>%
+    filter(!binomial %in% habitat_iucn$binomial[habitat_iucn$OnlyLake == 1]),
+  vroom::vroom('data/hybas12_fish_custom_ranges_occth10.csv',delim=',') %>%
+    filter(!binomial %in% habitat_custom$binomial[habitat_custom$OnlyLake == -1])
 )
 
-# merge with hb12_p data to have info on MAIN_BAS
 
+# merge with hb12_p data to have info on MAIN_BAS
 fish_end <- fish %>%
   full_join(.,hb12_p %>% as_tibble() %>% select(-geom)) %>%
   group_by(binomial) %>%
@@ -259,10 +310,6 @@ fish <- fish %>%
   filter(HYBAS_ID %in% catch_hb$HYBAS_ID) %>%
   full_join(.,catch_hb)
 
-#' include species traits and functional groups
-#' <span style="color:red"> **TBD** </span>
-
-# TBD
 
 #' calculate species richness per catchment
 
@@ -278,19 +325,6 @@ summary(fish_sr)
 
 # save table
 write.csv(fish_sr,'tabs/stations_SR.csv',row.names = F)
-
-#' put together and overall table with attributes, flow metrics and SR
-
-write.csv(
-  full_join(
-    read.csv('tabs/stations_attributes.csv') %>% as_tibble(),
-    read.csv('tabs/stations_indices.csv') %>% as_tibble()
-  ) %>%
-    full_join(.,catch %>% as_tibble() %>% select(gsim.no,MAIN_BAS)) %>%
-    full_join(.,fish_sr)
-  ,'tabs/stations_all_attributes.csv',row.names = F
-)
-
 
 
 
