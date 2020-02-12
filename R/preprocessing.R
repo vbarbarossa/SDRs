@@ -240,7 +240,7 @@ catch_new <- left_join(catch,dams_no)
 catch_new$dams_good2_no[is.na(catch_new$dams_good2_no)] <- 0
 
 # and update the previous catchment gpkg file
-st_write(catch_new,'spatial/stations_catchments.gpkg',delete_dsn = TRUE)
+st_write(catch_new,'spatial/stations_catchments2.gpkg',delete_dsn = TRUE)
 
 #' *****************************************************************************************************************************
 #' # Species richness data sampling
@@ -258,7 +258,7 @@ hb12_p <- read_sf('data/hybas12_points_nolakes.gpkg') %>%
   select(HYBAS_ID,MAIN_BAS)
 
 # load the previously produced catchments layer
-catch <- read_sf('spatial/stations_catchments.gpkg')
+catch <- read_sf('spatial/stations_catchments2.gpkg')
 
 # check crs
 st_crs(hb12_p) == st_crs(catch)

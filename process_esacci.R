@@ -1,7 +1,7 @@
 # on RU server
 # cropland = 10 and 20
 
-for(year in 1992:2015){
+for(year in c(1992,2015)){
   
   system(
     paste0(

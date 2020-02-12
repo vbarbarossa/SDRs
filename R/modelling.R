@@ -21,7 +21,7 @@ tab_all <- full_join(
   read.csv('tabs/stations_attributes.csv') %>% as_tibble(),
   read.csv('tabs/stations_indices.csv') %>% as_tibble()
 ) %>%
-  full_join(.,sf::read_sf('spatial/stations_catchments.gpkg') %>% 
+  full_join(.,sf::read_sf('spatial/stations_catchments2.gpkg') %>% 
               as_tibble() %>% dplyr::select(-geom,-area.est)) %>%
   full_join(.,read.csv('tabs/stations_SR.csv'),by='gsim.no') %>%
   as_tibble()
@@ -87,7 +87,12 @@ tab <- tab_all %>%
     # Q_var = IQR/P50
     PREC_DELTA = abs(prec_cur_mean - prec_hist_mean),
     TEMP_DELTA = abs(temp_cur_mean - temp_hist_mean),
-    LATITUDE = abs(LAT)
+    LATITUDE = abs(LAT),
+    CROP_PAST = cropland_1992_sum/cropland_1992_count,
+    CROP_PRES = cropland_2015_sum/cropland_2015_count
+  ) %>%
+  mutate(
+    CROP_DELTA = CROP_PRES - CROP_PAST
   ) %>%
   # select the variables and rename them
   select(
@@ -103,14 +108,22 @@ tab <- tab_all %>%
     AREA = area.est, TI = tp.mean, ELEVATION = ele.mean, DRAINAGE = dr.mean, SLOPE = slp.mean,
     # Anthropogenic
     POP = pop.count, POP_DENS = pd.mean, NO_DAMS = dams_good2_no, URB = nl.mean,
+    CROP_PAST,CROP_PRES,CROP_DELTA,
     # Response
     SR_tot, SR_end
   )
+
+#' kick-out quality level 'caution' (meaning catchment area estimate is uncertain)
+tab <- tab %>%
+  filter(QUALITY !="Caution")
 
 #' check for NAs and flow/precipitation metrics < 0 and remove those records
 
 # NAs
 apply(tab,2,function(x) sum(is.na(x)))
+
+# looks like URB has NAs instead of zeroes
+tab$URB[is.na(tab$URB)] <- 0
 
 # Q < 0
 apply(tab %>% select(starts_with('Q'),-QUALITY,starts_with('PREC')),2,function(x) sum(x < 0,na.rm=T))
@@ -118,13 +131,10 @@ apply(tab %>% select(starts_with('Q'),-QUALITY,starts_with('PREC')),2,function(x
 # remove
 
 tab <- tab %>%
-  drop_na() %>%
+  drop_na() %>% # we are also dropping 351 basins with NAs in DRAINAGE
   filter(Q_MIN >= 0)
 tab
 
-#' kick-out quality level 'caution' (meaning catchment area estimate is uncertain)
-tab <- tab %>%
-  filter(QUALITY !="Caution")
 
 #' make main basin ID as factor
 tab$BAS <- as.factor(tab$BAS)
