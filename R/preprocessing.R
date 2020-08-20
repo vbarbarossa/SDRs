@@ -250,6 +250,11 @@ st_write(catch_new,'spatial/stations_catchments2.gpkg',delete_dsn = TRUE)
 
 source('R/MASTER.R')
 
+# what has been loaded
+as.list(.GlobalEnv)
+
+#' load packages needed
+valerioUtils::libinv(c('dplyr','sf'))
 
 #' intersect the catchments with the HB12 points to assign the gsim id to each catchment
 
@@ -281,22 +286,32 @@ catch_hb <- lst[which(unname(lst %>% sapply(.,function(x) length(x) != 0)))] %>%
 
 #' check fish endemism at the basin scale: if a fish species occurs in only one main basin then it is considered endemic
 
-# load habitat type to exclude exclusively lentic species
-habitat_iucn <- read.csv('data/iucn_habitat_type.csv') %>%
-  as_tibble() %>%
-  select(binomial,lotic,lentic) %>%
-  mutate(OnlyLake = as.numeric(lotic == 0 & lentic == 1))
-habitat_custom <- read.csv('data/custom_ranges_habitatFishbase.csv') %>%
-  as_tibble()
+# # load habitat type to exclude exclusively lentic species
+# habitat_iucn <- read.csv('data/iucn_habitat_type.csv') %>%
+#   as_tibble() %>%
+#   select(binomial,lotic,lentic) %>%
+#   mutate(OnlyLake = as.numeric(lotic == 0 & lentic == 1))
+# habitat_custom <- read.csv('data/custom_ranges_habitatFishbase.csv') %>%
+#   as_tibble()
+# 
+# # get the fish data and filter out exclusively lentic
+# fish <- bind_rows(
+#   vroom::vroom('data/hybas12_fish.csv',delim=',') %>%
+#     filter(!binomial %in% habitat_iucn$binomial[habitat_iucn$OnlyLake == 1]),
+#   vroom::vroom('data/hybas12_fish_custom_ranges_occth10.csv',delim=',') %>%
+#     filter(!binomial %in% habitat_custom$binomial[habitat_custom$OnlyLake == -1])
+# )
+
+# all species names excluding exclusively lentic and other filtering steps as in fishsuit
+# correspondence table with fishbase names (same used in fish_sp_name)
+fish_sp_names <- read_sf('../fishsuit/proc/species_ranges_raw.gpkg') %>%
+  as_tibble() %>% select(binomial,fishbase_1) %>% 
+  filter(fishbase_1 %in% (read.csv('../fishsuit/proc/thresholds_average_filtered.csv')%>%
+                            pull(binomial) %>% as.character()))
 
 # get the fish data and filter out exclusively lentic
-fish <- bind_rows(
-  vroom::vroom('data/hybas12_fish.csv',delim=',') %>%
-    filter(!binomial %in% habitat_iucn$binomial[habitat_iucn$OnlyLake == 1]),
-  vroom::vroom('data/hybas12_fish_custom_ranges_occth10.csv',delim=',') %>%
-    filter(!binomial %in% habitat_custom$binomial[habitat_custom$OnlyLake == -1])
-)
-
+fish <- readRDS('../fishsuit/proc/species_ranges_raw_on_hybas12.rds') %>%
+  inner_join(fish_sp_names)
 
 # merge with hb12_p data to have info on MAIN_BAS
 fish_end <- fish %>%
