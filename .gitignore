@@ -7,3 +7,5 @@ data
 tabs
 figs
 spatial
+*.html
+*.tiff
