@@ -43,7 +43,7 @@ lmer.glmulti<-function(formula,data,random="",...) {
 
 
 # define variables
-covariates_selection <- tab.t %>% select(-BAS,-ID,-starts_with('SR'), -starts_with('Q_M'), -starts_with('Q_DOY')) %>% colnames
+covariates_selection <- tab.t %>% select(-BAS,-POP,-DAMS,-URB,-CROP_PRES,-HFP1993,-starts_with('SR'), -starts_with('Q_M'), -starts_with('Q_DOY')) %>% colnames
 # covariates_selection <- tab.t %>% select(starts_with('Q'),-starts_with('Q_M'),TEMP_PRES,ELEVATION) %>% colnames
 
 response_selection = 'SR_tot'
@@ -123,7 +123,7 @@ for(Qvar in Q_magnitude){
       row.names(t) <- NULL
       return(t)
     }
-    write.csv(t_res,paste0(valerioUtils::dir_('tabs/dredging/'),'dredge_coefficients_no',nv,'_',response_selection,'_',Qvar,'.csv'),row.names = F)
+    write.csv(t_res,paste0('tabs/dredge_coefficients_no',nv,'_',response_selection,'_',Qvar,'.csv'),row.names = F)
     
   }
   
@@ -137,7 +137,7 @@ for(Qvar in Q_magnitude){
 
 res_filtered <- foreach(Qvar = Q_magnitude) %do% {
   
-  d <- foreach(nv = 1:(length(covariates_selection)+length(interaction_term)+1),.combine = 'rbind') %do% read.csv(paste0('tabs/dredging/dredge_coefficients_no',nv,'_',response_selection,'_',Qvar,'.csv'))
+  d <- foreach(nv = 1:(length(covariates_selection)+length(interaction_term)+1),.combine = 'rbind') %do% read.csv(paste0('tabs/dredge_coefficients_no',nv,'_',response_selection,'_',Qvar,'.csv'))
   
   # filter out rows with correlated terms
   rows_to_filter <- numeric()

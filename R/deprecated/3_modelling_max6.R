@@ -19,7 +19,7 @@ valerioUtils::libinv(c(
 source("R/HighstatLibV10.R") # For VIFs
 
 #'  load the preprocessed table with all attributes
-(tab <- read.csv('tabs/stations_filtered_divAREA.csv') %>%
+(tab <- read.csv('tabs/stations_filtered.csv') %>%
   as_tibble() %>%
     select(-QUALITY,-SR_end)  )
 
@@ -29,7 +29,7 @@ source("R/HighstatLibV10.R") # For VIFs
 (tab_ranges <- apply(tab %>% select_if(is.numeric),2,
        function(x) paste0(round(mean(x,na.rm=T),2),' (',round(min(x,na.rm=T),2),' - ',round(max(x,na.rm=T),2), ')') 
       ) %>% as.data.frame)
-write.csv(tab_ranges,'tabs/covariates_range_values_divAREA.csv',row.names = T)
+write.csv(tab_ranges,'tabs/covariates_range_values.csv',row.names = T)
 
 #'***********************************************************************************************
 #' # Modelling
@@ -93,7 +93,7 @@ cm <- cor(tab.t %>% select(-starts_with('SR')), use = "pairwise.complete.obs")
 corrplot::corrplot(cm, method = 'number', type = 'lower', number.cex = 0.8)
 
 # and save
-jpeg('figs/corrplot_covariates_transformed_divAREA.jpg',width = 200, height = 200, res = 600, units = 'mm')
+jpeg('figs/corrplot_covariates_transformed.jpg',width = 200, height = 200, res = 600, units = 'mm')
 corrplot::corrplot(cm, method = 'number', type = 'lower',number.cex = 0.8)
 dev.off()
 
@@ -120,6 +120,12 @@ corvif(tab.t %>% select(-starts_with('SR'),-Q_MAX, -Q_MIN, -PREC_PRES))
 #' 
 #' ### Dredging the models
 
+# add the BAS id to the transformed variables table
+tab.t$BAS <- tab$BAS
+
+write.csv(tab,'tabs/input_tab.csv',row.names=F)
+write.csv(tab.t,'tabs/input_tab_transformed.csv',row.names=F)
+
 # modify lmer call for dredging
 lmer.glmulti<-function(formula,data,random="",...) {
   newf <- formula
@@ -130,8 +136,7 @@ lmer.glmulti<-function(formula,data,random="",...) {
              REML=FALSE,...)
 }
 
-# add the BAS id to the transformed variables table
-tab.t$BAS <- tab$BAS
+
 
 # define variables
 covariates_selection <- c(tab.t %>% select(-BAS,-starts_with('SR'), -starts_with('Q_M'), -starts_with('Q_DOY')) %>% colnames,
@@ -142,23 +147,6 @@ response_selection = 'SR_tot'
 random_term <- 'BAS'
 interaction_term <- c('TEMP_PRES','ELEVATION') # interactions with Q_magnitude variables
 Q_magnitude <- c('Q_MEAN','Q_MIN','Q_MAX')
-
-# df <- tab.t
-# 
-# fit <- lmer(paste(
-#   response_selection,"~", # response
-#   paste(c(Qvar,covariates_selection),collapse=" + "), # fixed terms
-#   '+',
-#   paste0('I(',interaction_term,'*',Qvar,')',collapse = ' + '), # interaction terms with Qvar
-#   
-#   '+',
-#   paste0("(1 + ",Qvar,"|",random_term,")") # random term
-# ),
-# data = df)
-# 
-# fit <- lmer('SR_tot ~ Q_MEAN + POP + DAMS + URB + CROP_PRES + (1 + Q_MEAN|BAS)',
-# data = df)
-
 
 res <- foreach(Qvar = Q_magnitude) %do% {
   
@@ -188,6 +176,7 @@ res <- foreach(Qvar = Q_magnitude) %do% {
                            sexrate = 0.1, # The rate of sexual reproduction for the genetic algorithm, between 0 and 1
                            imm = 0.3, # The rate of immigration for the genetic algorithm, between 0 and 1
                            deltaM = 2,
+                           maxsize = 6,
                            # chunk = i,
                            # chunks = 8,
                            # report = FALSE,
@@ -229,7 +218,7 @@ res <- foreach(Qvar = Q_magnitude) %do% {
     row.names(t) <- NULL
     return(t)
   }
-  write.csv(t_res,paste0('tabs/dredge_coefficients_ranslope_',response_selection,'_',Qvar,'.csv'),row.names = F)
+  write.csv(t_res,paste0('tabs/dredge_coefficients_ranslope_',response_selection,'_',Qvar,'_max6.csv'),row.names = F)
   
   return(t_res)
 }
@@ -249,7 +238,7 @@ res_filtered <- foreach(i = seq_along(res)) %do% {
     do.call('rbind',.) %>%
     arrange(desc(no_pred))
   
-  write.csv(dfilt,paste0('tabs/dredge_coefficients_ranslope_',response_selection,'_',names(res)[i],'_FILTERED.csv'),row.names = F)
+  write.csv(dfilt,paste0('tabs/dredge_coefficients_ranslope_',response_selection,'_',names(res)[i],'_FILTERED_max6.csv'),row.names = F)
   
   return(dfilt)
   

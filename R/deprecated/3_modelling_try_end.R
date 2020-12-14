@@ -18,8 +18,8 @@ valerioUtils::libinv(c(
 
 source("R/HighstatLibV10.R") # For VIFs
 
-tab <- read.csv('tabs/input_tab_divAREA.csv')
-tab.t <- read.csv('tabs/input_tab_transformed_divAREA.csv')
+tab <- read.csv('tabs/input_tab_divAREA_end.csv')
+tab.t <- read.csv('tabs/input_tab_transformed_divAREA_end.csv')
 
 # # first fit with Q only
 # (fit <- lmer('SR_tot ~ Q_MEAN + (1 + 1|BAS)',data = tab.t))
@@ -43,7 +43,7 @@ lmer.glmulti<-function(formula,data,random="",...) {
 
 
 # define variables
-covariates_selection <- tab.t %>% select(-BAS,-ID,-starts_with('SR'), -starts_with('Q_M'), -starts_with('Q_DOY')) %>% colnames
+covariates_selection <- tab.t %>% select(-BAS,-POP,-DAMS,-URB,-CROP_PRES,-HFP1993,-starts_with('SR'), -starts_with('Q_M'), -starts_with('Q_DOY')) %>% colnames
 # covariates_selection <- tab.t %>% select(starts_with('Q'),-starts_with('Q_M'),TEMP_PRES,ELEVATION) %>% colnames
 
 response_selection = 'SR_tot'
@@ -123,21 +123,17 @@ for(Qvar in Q_magnitude){
       row.names(t) <- NULL
       return(t)
     }
-    write.csv(t_res,paste0(valerioUtils::dir_('tabs/dredging/'),'dredge_coefficients_no',nv,'_',response_selection,'_',Qvar,'.csv'),row.names = F)
-    
+    write.csv(t_res,paste0('tabs/dredge_coefficients_no',nv,'_',response_selection,'_',Qvar,'_end.csv'),row.names = F)
+  
   }
   
 }
 
 # make a table with the best models with decreasing number of variables
-# terms mutually exclusive given the high pearson's r (>= 0.7)
-# Elevation - Slope
-# Temp_pres - Temp_delta
-# Qmin - Qcv
-
 res_filtered <- foreach(Qvar = Q_magnitude) %do% {
   
-  d <- foreach(nv = 1:(length(covariates_selection)+length(interaction_term)+1),.combine = 'rbind') %do% read.csv(paste0('tabs/dredging/dredge_coefficients_no',nv,'_',response_selection,'_',Qvar,'.csv'))
+  
+  d <- foreach(nv = 1:(length(covariates_selection)+length(interaction_term)+1),.combine = 'rbind') %do% read.csv(paste0('tabs/dredge_coefficients_no',nv,'_',response_selection,'_',Qvar,'_end.csv'))
   
   # filter out rows with correlated terms
   rows_to_filter <- numeric()
@@ -160,140 +156,46 @@ res_filtered <- foreach(Qvar = Q_magnitude) %do% {
     do.call('rbind',.) %>%
     arrange(desc(no_pred))
   
-  write.csv(dfilt,paste0('tabs/dredge_coefficients_',response_selection,'_',Qvar,'_FILTERED.csv'),row.names = F)
+  write.csv(dfilt,paste0('tabs/dredge_coefficients_',response_selection,'_',Qvar,'_FILTERED_end.csv'),row.names = F)
   
   return(dfilt)
   
 }
 
-no_pred_sel <- c(10,10,11)
-fit <- list()
-for(i in 1:3){
-  Qvar <- Q_magnitude[i]
-  
-  mod <- paste0('SR_tot ~',
-                res_filtered[[i]] %>% filter(no_pred == no_pred_sel[i]) %>% dplyr::select(model) %>% pull %>% as.character,
-                ' + ',
-                paste0("(1|",random_term,")"))
-  mod <- gsub(Q_magnitude[i],'Q',mod)
-  
-  df <- tab.t
-  colnames(df) <- gsub(Q_magnitude[i],'Q',colnames(df))
-  
-  fit[[i]] <- lmer(mod, data = df)
-  
-}
+no_pred_sel <- c(10,10,10)
+i = 1
+Qvar <- Q_magnitude[i]
 
-# df$resid <- resid(fit)
+df <- tab.t
 
-# fit.res <- glm(resid ~ HFP2009,data = df)
-# fit.res %>% summary
-# 
-# library(ggplot2)
-# ggplot(df,aes(x = HFP2009, y = resid)) +
-#   geom_point(color = 'gray60', size = 3, alpha = 0.5) +
-#   stat_smooth(method = 'lm', color = 'black', size = 1.5) +
-#   theme_minimal()
-# 
-# 
-# plot(df$HFP2009,df$resid)
-# plot(df$HFP2009,df$POP)
+fit <- lmer(paste0('SR_tot ~',
+                   res_filtered[[i]] %>% filter(no_pred == no_pred_sel[i]) %>% dplyr::select(model) %>% pull %>% as.character,
+                   ' + ',
+                   paste0("(1|",random_term,")")),
+            data = df)
 
-library(jtools); library(ggplot2)
+df$resid <- resid(fit)
 
-p <- plot_summs(fit[[2]],fit[[1]],fit[[3]],
-           model.names = c('Minimum flow','Mean flow','Maximum flow'),
-           colors = colorspace::sequential_hcl(4,'Viridis')[1:3],
-           coefs = c(
-             # streamflow
-             "Flow" = "Q","Flow seasonality" = "Q_CV",
-             # habitat area, heterogeneity and isolation
-             "Catchment area" = "AREA", "Topographic Index" = "TI", "Elevation" = "ELEVATION", "Elevation*Flow" = "I(ELEVATION * Q)",
-             # climate
-             "Precipitation" = "PREC_PRES","Temperature" = "TEMP_PRES", "Temperature*Flow" = "I(TEMP_PRES * Q)", 
-             # quaternary climate stability
-             "Holocene precipitation change" = "PREC_DELTA",
-             # anthropogenic
-             "Human Footprint Index" = "HFP2009"
-           )) +
-  theme_bw() +
-  theme(
-    axis.title = element_blank(),
-    panel.grid.minor.y = element_blank(),
-    panel.grid.major.y = element_blank(),
-    legend.direction = "horizontal",
-    legend.position = "top",
-    legend.title = element_blank(),
-    legend.margin=margin(0,0,0,0),
-    legend.box.margin=margin(-5,-10,-10,-10)
-  )
-p
-ggsave('figs/coefficients_regression.jpg', p,width = 150, height = 150, units = 'mm', dpi = 600)
+fit.res <- glm(resid ~ HFP2009,data = df)
+fit.res %>% summary
 
-export_summs(fit,
-           model.names = Q_magnitude,
-           colors = colorspace::sequential_hcl(4,'Viridis')[1:3],
-           coefs = c(
-             # streamflow
-             "Streamflow" = "Q","Streamflow Seasonality" = "Q_CV",
-             # habitat area, heterogeneity and isolation
-             "Catchment Area" = "AREA", "Topographic Index" = "TI", "Elevation" = "ELEVATION", "Elevation*Streamflow" = "I(ELEVATION * Q)",
-             # climate
-             "Precipitation" = "PREC_PRES","Temperature" = "TEMP_PRES", "Temperature*Streamflow" = "I(TEMP_PRES * Q)", 
-             # quaternary climate stability
-             "Holocene change Precipitation" = "PREC_DELTA",
-             # anthropogenic
-             "Human Footprint Index" = "HFP2009"
-           ), to.file = "docx", file.name = 'tabs/coefficients_regression.docx')
+library(ggplot2)
+ggplot(df,aes(x = HFP2009, y = resid)) +
+  geom_point(color = 'gray60', size = 3, alpha = 0.5) +
+  stat_smooth(method = 'lm', color = 'black', size = 1.5) +
+  theme_minimal()
+
+
+plot(df$HFP2009,df$resid)
+plot(df$HFP2009,df$POP)
 
 # plot(tab.t$HFP2009,tab$SR_tot/(tab$AREA**1) %>% log10)
 # install.packages('effects')
-# library(effects)
-# 
-# all <- allEffects(fit[[1]])
-# plot(all)
+library(effects)
 
+all <- allEffects(fit)
+plot(all)
 
-# check Moran's I
+lmer("SR_tot ~1 + Q_MEAN + PREC_PRES + TEMP_PRES + PREC_DELTA + AREA + TI + ELEVATION + I(TEMP_PRES * Q_MEAN) + I(ELEVATION * Q_MEAN) + (1|BAS)",data = df)
 
-# calculate residuals
-i = 1
-Qvar <- Q_magnitude[i]
-mod <- paste0('SR_tot ~',
-              res_filtered[[i]] %>% filter(no_pred == no_pred_sel[i]) %>% dplyr::select(model) %>% pull %>% as.character,
-              ' + ',
-              paste0("(1|",random_term,")"))
-mod <- gsub(Q_magnitude[i],'Q',mod)
-
-df <- cbind(tab[,c('ID','BAS')],tab.t)
-colnames(df) <- gsub(Q_magnitude[i],'Q',colnames(df))
-
-fit <- lmer(mod, data = df)
-df$resid <- resid(fit)
-
-# link to spatial data for lat long
-library(sf)
-s <- sf::read_sf('spatial/stations_catchments2.gpkg')
-
-s <- s %>% dplyr::select(ID = gsim.no) %>% right_join(df[,c('ID','resid')])
-
-# calculate centroids of s
-sc <- sf::st_centroid(s)
-
-dist <- sf::st_distance(sc,sc)
-
-dist.inv <- 1/dist
-
-diag(dist.inv) <- 0
-
-dist.inv[1:5, 1:5]
-
-clean_units <- function(x){
-  attr(x,"units") <- NULL
-  class(x) <- setdiff(class(x),"units")
-  x
-}
-
-dist.inv <- clean_units(dist.inv)
-ape::Moran.I(sc$resid, dist.inv)
 

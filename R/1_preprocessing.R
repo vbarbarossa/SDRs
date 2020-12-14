@@ -272,7 +272,7 @@ st_crs(hb12_p) == st_crs(catch)
 lst <- st_intersects(catch,hb12_p)
 
 # number of catchments without hydrobasins:
-length(lst) - lst %>% sapply(.,function(x) length(x) != 0) %>% sum
+length(lst) - (lst %>% sapply(.,function(x) length(x) != 0) %>% sum)
 
 # ids of hydrobasins
 hybas_id <- hb12_p$HYBAS_ID
@@ -284,46 +284,91 @@ catch_hb <- lst[which(unname(lst %>% sapply(.,function(x) length(x) != 0)))] %>%
   do.call('rbind',.) %>%
   as_tibble()
 
-#' check fish endemism at the basin scale: if a fish species occurs in only one main basin then it is considered endemic
+# load Tedesco data for filtering out non-native species
+# sample Tedesco basins
+bas <- read_sf('../fishsuit/data/Tedesco/Basin042017_3119.shp') %>% mutate(id = 1:nrow(.)) 
+bas_ras <-  fasterize::fasterize(sf = bas,raster = raster::raster(res = 1/12), field = 'id')
+hb12_p$ws <- raster::extract(bas_ras,hb12_p)
+# check most recurring ted basin id per main bas, and assign that value to all the sub-basins belonging to the main bas
+hb12_main_bas <- hb12_p %>%
+  as_tibble() %>% select(-geom) %>%
+  filter(!is.na(ws)) %>%
+  group_by(MAIN_BAS) %>%
+  summarise(
+    bas = table(ws) %>% sort(decreasing = T) %>% .[1] %>% names
+  )
 
-# # load habitat type to exclude exclusively lentic species
-# habitat_iucn <- read.csv('data/iucn_habitat_type.csv') %>%
-#   as_tibble() %>%
-#   select(binomial,lotic,lentic) %>%
-#   mutate(OnlyLake = as.numeric(lotic == 0 & lentic == 1))
-# habitat_custom <- read.csv('data/custom_ranges_habitatFishbase.csv') %>%
-#   as_tibble()
-# 
-# # get the fish data and filter out exclusively lentic
-# fish <- bind_rows(
-#   vroom::vroom('data/hybas12_fish.csv',delim=',') %>%
-#     filter(!binomial %in% habitat_iucn$binomial[habitat_iucn$OnlyLake == 1]),
-#   vroom::vroom('data/hybas12_fish_custom_ranges_occth10.csv',delim=',') %>%
-#     filter(!binomial %in% habitat_custom$binomial[habitat_custom$OnlyLake == -1])
-# )
+# merge back with hb12_p
+hb12 <- hb12_p %>% as_tibble() %>% select(-geom) %>% left_join(hb12_main_bas) %>% select(-ws)
+
+
+ted_occ <- read.csv('../fishsuit/data/Tedesco/Occurrence_Table.csv',sep = ';') %>%
+  as_tibble() %>%
+  rename(BasinName = X1.Basin.Name) %>%
+  left_join(bas %>% as_tibble() %>% select(-geometry,BasinName,id)) %>%
+  select(id,binomial = X6.Fishbase.Valid.Species.Name, native = X3.Native.Exotic.Status)
+
+#' check fish endemism at the basin scale: if a fish species occurs in only one main basin then it is considered endemic
 
 # all species names excluding exclusively lentic and other filtering steps as in fishsuit
 # correspondence table with fishbase names (same used in fish_sp_name)
-fish_sp_names <- read_sf('../fishsuit/proc/species_ranges_raw.gpkg') %>%
-  as_tibble() %>% select(binomial,fishbase_1) %>% 
-  filter(fishbase_1 %in% (read.csv('../fishsuit/proc/thresholds_average_filtered.csv')%>%
+# fish_sp_names <- foreign::read.dbf('../fishsuit/proc/species_ranges_raw.dbf') %>%
+#   as_tibble() %>% select(binomial,fishbase_1) %>% 
+#   filter(fishbase_1 %in% (read.csv('../fishsuit/proc/thresholds_average_filtered.csv')%>%
+#                             pull(binomial) %>% as.character()))
+
+fish_sp_names <- read_sf('../fishsuit/proc/species_ranges_merged.gpkg') %>%
+  as_tibble() %>% select(-geom) %>% 
+  filter(binomial %in% (read.csv('../fishsuit/proc/thresholds_average_filtered.csv')%>%
                             pull(binomial) %>% as.character()))
+
 
 # get the fish data and filter out exclusively lentic
 fish <- readRDS('../fishsuit/proc/species_ranges_raw_on_hybas12.rds') %>%
-  inner_join(fish_sp_names) %>% select(HYBAS_ID, binomial = fishbase_1) %>%
+  inner_join(fish_sp_names) %>%
+  as_tibble() %>%
+  select(HYBAS_ID, binomial) %>%
   distinct()
-# length(unique(fish$binomial)) #11,425
+length(unique(fish_sp_names$binomial)) #11,425
+
+# filter out non-native based on ted_occ
+# prepare a list of exotic fish per ted basin id
+exotic <- ted_occ %>%
+  filter(native == 'exotic') %>%
+  select(id,binomial) %>%
+  mutate(binomial  = gsub('\\.',' ',binomial)) %>%
+  arrange(id)
+
+fish <- fish %>% left_join(hb12)
+fish$bas[is.na(fish$bas)] <- 0
+
+fish_split <- fish %>%
+  split(fish$bas)
+
+fish_1 <- fish_split[names(fish_split) %in% as.character(unique(exotic$id))]
+fish_2 <- fish_split[!names(fish_split) %in% names(fish_1)]
+
+fish_filtered <- lapply(names(fish_1),function(x){
+  t <- fish_1[x][[1]]
+  e <- exotic[as.character(exotic$id) == x,] %>% pull(binomial)
+  t <- t[!t$binomial %in% e,]
+  return(t)
+}) %>% do.call('rbind',.) %>%
+  bind_rows(fish_2 %>% do.call('rbind',.))
+
+# difference in number of hbunits covered
+# > nrow(fish) - nrow(fish_filtered)
+# [1] 339476 #~1% of occurrence records
 
 # merge with hb12_p data to have info on MAIN_BAS
-fish_end <- fish %>%
-  full_join(.,hb12_p %>% as_tibble() %>% select(-geom)) %>%
-  group_by(binomial) %>%
-  summarize(endemism = as.integer(length(unique(MAIN_BAS)) == 1))
+# fish_end <- fish %>%
+#   full_join(.,hb12_p %>% as_tibble() %>% select(-geom)) %>%
+#   group_by(binomial) %>%
+#   summarize(endemism = as.integer(length(unique(MAIN_BAS)) == 1))
 
 #' join table with the fish data
-fish <- fish %>% 
-  full_join(.,fish_end) %>%
+fish <- fish_filtered %>% 
+  # full_join(.,fish_end) %>%
   filter(HYBAS_ID %in% catch_hb$HYBAS_ID) %>%
   full_join(.,catch_hb)
 
@@ -333,8 +378,8 @@ fish <- fish %>%
 fish_sr <- fish %>%
   group_by(gsim.no) %>%
   summarize(
-    SR_tot = length(unique(binomial)),
-    SR_end = length(unique(binomial[endemism == 1]))
+    SR_tot = length(unique(binomial))
+    # ,SR_end = length(unique(binomial[endemism == 1]))
   )
 
 # range of SR values
@@ -342,6 +387,4 @@ summary(fish_sr)
 
 # save table
 write.csv(fish_sr,'tabs/stations_SR.csv',row.names = F)
-
-
 
